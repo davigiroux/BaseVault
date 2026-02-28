@@ -1,0 +1,8 @@
+{
+  "solidity.packageDefaultDependenciesDirectory": "packages/contracts/lib",
+  "solidity.remappings": [
+    "forge-std/=packages/contracts/lib/forge-std/src/",
+    "@openzeppelin/contracts/=packages/contracts/lib/openzeppelin-contracts/contracts/"
+  ],
+  "hardhat-solidity.telemetry": false
+}

@@ -1,0 +1,9 @@
+{
+  "name": "basevault",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "build:contracts": "cd packages/contracts && forge build",
+    "test:contracts": "cd packages/contracts && forge test -vvv"
+  }
+}

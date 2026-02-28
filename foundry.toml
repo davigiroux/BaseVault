@@ -1,0 +1,7 @@
+# Root-level config so the VS Code Solidity extension can resolve imports.
+# Forge uses packages/contracts/foundry.toml when run from that directory.
+[profile.default]
+src = "packages/contracts/src"
+out = "packages/contracts/out"
+libs = ["packages/contracts/lib"]
+solc = "0.8.20"
