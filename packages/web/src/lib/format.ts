@@ -29,3 +29,15 @@ export function formatUnlockDate(unixTimestamp: bigint): string {
     day: 'numeric',
   })
 }
+
+export function truncateAddress(address: string): string {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`
+}
+
+export function formatRelativeTime(unixSeconds: number): string {
+  const diff = Math.floor(Date.now() / 1000) - unixSeconds
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
+}

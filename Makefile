@@ -33,10 +33,13 @@ typecheck:
 lint:
 	cd packages/web && pnpm lint
 
+test-web:
+	cd packages/web && pnpm test
+
 # ── All ────────────────────────────────────────
 build: build-contracts build-web
 
-test: test-contracts typecheck
+test: test-contracts test-web typecheck
 
 clean:
 	cd packages/contracts && rm -rf out cache

@@ -9,6 +9,7 @@ import { Layout } from './components/Layout'
 import { VaultStatus } from './components/VaultStatus'
 import { DepositForm } from './components/DepositForm'
 import { WithdrawButton } from './components/WithdrawButton'
+import { EventFeed } from './components/EventFeed'
 
 const queryClient = new QueryClient()
 
@@ -22,6 +23,7 @@ function VaultApp() {
           <VaultStatus />
           <DepositForm />
           <WithdrawButton />
+          <EventFeed />
         </div>
       ) : (
         <div className="animate-fade-in py-16 text-center">
