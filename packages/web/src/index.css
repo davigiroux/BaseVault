@@ -1,0 +1,52 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+@theme {
+  --font-sans: 'Instrument Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --color-vault-bg: #09090b;
+  --color-vault-surface: #18181b;
+  --color-vault-border: #27272a;
+  --color-vault-border-hover: #3f3f46;
+  --color-vault-muted: #71717a;
+  --color-vault-text: #fafafa;
+  --color-vault-accent: #f59e0b;
+  --color-vault-success: #34d399;
+  --color-vault-danger: #f87171;
+}
+
+html {
+  background-color: var(--color-vault-bg);
+  color: var(--color-vault-text);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Override RainbowKit modal z-index */
+[data-rk] {
+  --rk-radii-modal: 8px;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.4s ease-out both;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
