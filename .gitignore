@@ -15,3 +15,6 @@ packages/contracts/broadcast/
 
 # OS
 .DS_Store
+
+# Vercel
+.vercel
