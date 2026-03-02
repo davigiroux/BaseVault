@@ -2,7 +2,7 @@
 
 Commitment savings protocol on Base. Deposit ETH with a time lock — withdrawals only permitted after the lock expires. Fully permissionless, no admin functions.
 
-**[Live on Base Sepolia](https://sepolia.basescan.org/address/0xA428339ecF9CEC74f02adAe28d1cB24c935Dd408)**
+**[Live Demo](https://web-alpha-five-o7k6218i8f.vercel.app)** · **[Contract on Base Sepolia](https://sepolia.basescan.org/address/0xA428339ecF9CEC74f02adAe28d1cB24c935Dd408)**
 
 ## How It Works
 
