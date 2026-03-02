@@ -18,7 +18,7 @@ jobs:
 
       - name: Install forge dependencies
         working-directory: packages/contracts
-        run: forge install foundry-rs/forge-std@v1.15.0 OpenZeppelin/openzeppelin-contracts@v5.1.0 --no-commit
+        run: forge install foundry-rs/forge-std@v1.15.0 OpenZeppelin/openzeppelin-contracts@v5.1.0 --no-git
 
       - name: Run tests
         working-directory: packages/contracts
