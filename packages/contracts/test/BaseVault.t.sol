@@ -8,7 +8,11 @@ contract BaseVaultTest is Test {
     BaseVault public vault;
     address public user = makeAddr("user");
 
-    event VaultDeposited(address indexed depositor, uint256 amount, uint256 unlocksAt);
+    event VaultDeposited(
+        address indexed depositor,
+        uint256 amount,
+        uint256 unlocksAt
+    );
     event VaultWithdrawn(address indexed depositor, uint256 amount);
 
     function setUp() public {
@@ -187,7 +191,10 @@ contract BaseVaultTest is Test {
         assertEq(vault.getDeposit(user).unlocksAt, block.timestamp + duration);
     }
 
-    function testFuzz_withdraw_succeedsAfterLock(uint96 amount, uint256 duration) public {
+    function testFuzz_withdraw_succeedsAfterLock(
+        uint96 amount,
+        uint256 duration
+    ) public {
         vm.assume(amount > 0);
         duration = bound(duration, 1 days, 365 days);
 
