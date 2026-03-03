@@ -4,133 +4,135 @@ Each phase has explicit acceptance criteria. A phase is complete only when all c
 
 ---
 
-## Phase 1 — Foundations (Weeks 1–2)
+## Phase 1 — Storage Redesign & Multi-Vault (Weeks 1–3)
 
-**Goal:** Working Foundry environment with a deployable contract skeleton.
+**Goal:** Deploy `BaseVaultV2.sol` with a new storage model that supports multiple concurrent ETH vaults per user.
 
 ### Tasks
-- Initialize monorepo with pnpm workspaces
-- Set up Foundry project inside `packages/contracts`
-- Install OpenZeppelin v5 via forge
-- Write `BaseVault.sol` skeleton with state variables, custom errors, and events (no logic yet)
-- Write first Foundry test file that compiles and runs
+- Create `BaseVaultV2.sol` as a new file (keep `BaseVault.sol` intact — v1 stays deployed)
+- Redesign storage: `mapping(address => Vault[])` replacing `mapping(address => Deposit)`
+- Implement `deposit(uint256 lockDuration) external payable returns (uint256 vaultId)`
+- Implement `withdraw(uint256 vaultId) external` — CEI pattern, indexed by vault ID
+- Implement `getVaults(address user)` and `getVault(address user, uint256 vaultId)` view functions
+- Update events to include `vaultId` and `asset` fields
+- Add new custom errors: `Vault__InvalidVaultId`, `Vault__AlreadyWithdrawn`
+- Write full test suite for multi-vault behavior
 
 ### Acceptance Criteria
-- [ ] `forge build` passes with zero warnings
-- [ ] `forge test` runs and all tests pass (even if trivial)
-- [ ] Contract defines: `owner`, `lockDuration`, `deposits` mapping, `VaultDeposited` event, `VaultWithdrawn` event
-- [ ] Custom errors defined: `Vault__ZeroAmount`, `Vault__NotYetUnlocked`, `Vault__NothingToWithdraw`, `Vault__TransferFailed`
-- [ ] README documents how to run the project locally
+- [ ] `forge build` passes with zero warnings on both `BaseVault.sol` and `BaseVaultV2.sol`
+- [ ] User can create 3 concurrent ETH vaults with different lock durations
+- [ ] Each vault tracks its own amount and unlock timestamp independently
+- [ ] `withdraw(0)` withdraws vault 0 without affecting vault 1
+- [ ] Withdrawing a vault marks it as withdrawn — second withdrawal reverts with `Vault__AlreadyWithdrawn`
+- [ ] `getVaults()` returns the correct array for any address
+- [ ] Fuzz test: create N vaults (N = 1–10), withdraw each in random order, assert correct amounts
+- [ ] Reentrancy test: malicious contract attempts re-entry during ETH withdrawal, fails
+- [ ] 100% line/branch/function coverage on `BaseVaultV2.sol`
+- [ ] All existing `BaseVault.sol` tests still pass
 
 ---
 
-## Phase 2 — Core Contract Logic (Weeks 3–5)
+## Phase 2 — ERC-20 Support (Weeks 4–6)
 
-**Goal:** Fully functional and tested ETH vault contract.
+**Goal:** Extend `deposit()` to accept any whitelisted ERC-20 token in addition to ETH. Introduce an owner-controlled token whitelist.
 
 ### Tasks
-- Implement `deposit()` — accepts ETH, records amount and timestamp per depositor
-- Implement `withdraw()` — enforces lock period, transfers ETH back, follows CEI pattern
-- Implement `getDeposit(address)` view function
-- Write comprehensive Foundry tests
+- Add `Ownable` from OpenZeppelin, set owner in constructor
+- Add `mapping(address => bool) public whitelistedAssets` with `whitelistAsset(address)` and `removeAsset(address)` owner functions
+- Update `deposit()` signature to `deposit(address asset, uint256 amount, uint256 lockDuration) external payable`
+- Implement ETH path: `asset == address(0)`, use `msg.value`
+- Implement ERC-20 path: validate `msg.value == 0`, use `SafeERC20.safeTransferFrom`
+- Update `withdraw()` to return correct asset (ETH via `call`, ERC-20 via `SafeERC20.safeTransfer`)
+- Add new custom errors: `Vault__AssetNotWhitelisted`, `Vault__ETHValueMismatch`
+- Write tests using OpenZeppelin's `ERC20Mock`
 
 ### Acceptance Criteria
-- [ ] `deposit()` correctly stores amount and `block.timestamp` for the depositor
-- [ ] `withdraw()` reverts with `Vault__NotYetUnlocked` before lock period ends
-- [ ] `withdraw()` reverts with `Vault__NothingToWithdraw` if no deposit exists
-- [ ] `withdraw()` correctly transfers ETH and clears the deposit record
-- [ ] Reentrancy attack test: contract resists reentrant withdrawal attempt
-- [ ] Fuzz test on `deposit()`: any amount > 0 is correctly recorded
-- [ ] `forge coverage` shows >90% line coverage on `BaseVault.sol`
+- [ ] ETH deposits work identically to Phase 1 behavior
+- [ ] ERC-20 deposit pulls tokens from user via `safeTransferFrom` after user approval
+- [ ] ERC-20 withdrawal returns correct token amount via `safeTransfer`
+- [ ] Depositing a non-whitelisted token reverts with `Vault__AssetNotWhitelisted`
+- [ ] Depositing ETH while specifying an ERC-20 address reverts with `Vault__ETHValueMismatch`
+- [ ] Only owner can whitelist/remove tokens — non-owner call reverts
+- [ ] Fuzz test: random ERC-20 amounts deposit and withdraw correctly
+- [ ] Multi-vault test: user holds one ETH vault and one ERC-20 vault simultaneously
+- [ ] 100% coverage maintained
 
 ---
 
-## Phase 3 — Testnet Deployment (Week 6)
+## Phase 3 — Aave Yield Integration (Weeks 7–11)
 
-**Goal:** Contract live on Base Sepolia, verified on Basescan.
+**Goal:** Deploy idle vault funds into Aave v3 on Base while locked. Yield accrues to the depositor and is returned alongside principal on withdrawal.
 
 ### Tasks
-- Write `Deploy.s.sol` deployment script
-- Configure `foundry.toml` with Base Sepolia RPC
-- Deploy to Base Sepolia
-- Verify contract on Basescan
-- Test live contract with `cast` CLI calls
+- Add `IPool` and `IWETHGateway` Aave v3 interfaces (copy from Aave's GitHub)
+- Add Aave Pool address and WETH Gateway address as immutable constructor parameters
+- Update `deposit()`: after recording state, supply to Aave (`pool.supply()` for ERC-20, `wethGateway.depositETH()` for ETH), set `vault.yielding = true`
+- Update `withdraw()`: if `vault.yielding == true`, call Aave withdraw, calculate yield = returned amount − principal, return both to user
+- Add `totalYield(address user, uint256 vaultId) external view` — returns live accrued yield via aToken balance delta
+- Add owner-controlled `yieldEnabled` flag — pauses new yield deployments without affecting existing vaults or withdrawals
+- Write fork tests against Base Sepolia using Foundry's `vm.createFork`
 
 ### Acceptance Criteria
-- [ ] Contract deployed to Base Sepolia with a public address
-- [ ] Contract source verified on Basescan (readable ABI and source)
-- [ ] Successful `deposit` transaction visible on Basescan
-- [ ] Successful `withdraw` transaction after lock period visible on Basescan
-- [ ] Deployment address documented in `ARCHITECTURE.md`
+- [ ] ETH deposit supplies to Aave via WETH Gateway on Base Sepolia fork
+- [ ] ERC-20 deposit (USDC) supplies to Aave Pool on Base Sepolia fork
+- [ ] After `vm.warp(+30 days)`, aToken balance exceeds principal — yield has accrued
+- [ ] `withdraw()` returns principal + yield to user in a single transaction
+- [ ] `totalYield()` returns correct accrued yield at any point during the lock period
+- [ ] `vault.yielding == false` for any vault created while yield is paused
+- [ ] Owner can disable/re-enable yield deployment — existing vault withdrawals unaffected
+- [ ] Fork tests pass against live Base Sepolia Aave v3 deployment
+- [ ] All non-fork unit tests maintain 100% coverage
 
 ---
 
-## Phase 4 — React Frontend (Weeks 7–10)
+## Phase 4 — React Frontend v2 (Weeks 12–15)
 
-**Goal:** Clean, functional UI that connects to the deployed contract.
+**Goal:** Rebuild the UI around multi-vault architecture. Add token selector, vault list view, ERC-20 approval flow, and live yield display.
 
 ### Tasks
-- Initialize Vite + React + TypeScript project in `packages/web`
-- Configure wagmi v2 with Base Sepolia + Base Mainnet
-- Build wallet connection flow (RainbowKit or ConnectKit)
-- Build `useVault` custom hook wrapping all contract interactions
-- Build `DepositForm` component
-- Build `VaultStatus` component showing lock time remaining and deposited amount
-- Build `WithdrawButton` component with disabled state during lock
+- Replace single `VaultStatus` with `VaultList` + `VaultCard` per-vault components
+- Build `TokenSelector` — ETH and all whitelisted ERC-20s from contract
+- Build `ApproveButton` — step 1 of ERC-20 deposit flow, hidden when allowance is sufficient
+- Build `useTokenApproval` hook — reads current allowance, triggers `approve()`
+- Build `useVaults` hook — `getVaults()` for connected user
+- Build `useVaultYield` hook — polls `totalYield()` every 30 seconds
+- Update `EventFeed` to handle `vaultId` in events
+- Update all error messages for new custom errors
 
 ### Acceptance Criteria
-- [ ] User can connect wallet on Base Sepolia
-- [ ] `DepositForm` validates input (no zero, no negative) before submitting
-- [ ] Transaction pending state is shown during deposit/withdraw
-- [ ] `VaultStatus` displays correct deposited amount (formatted, not raw BigInt)
-- [ ] `VaultStatus` displays a countdown or date for when withdrawal unlocks
-- [ ] `WithdrawButton` is disabled and shows reason when lock is active
+- [ ] Deposit form shows token selector (ETH + all whitelisted ERC-20s)
+- [ ] ERC-20 deposit shows two-step flow: Approve → Deposit, in that order
+- [ ] Approve button is hidden when allowance is already sufficient
+- [ ] `VaultList` shows all active vaults for connected wallet
+- [ ] Each `VaultCard` displays: asset, principal, live yield, unlock countdown, withdraw button
+- [ ] `WithdrawButton` is disabled with reason when lock is active
+- [ ] Yield display updates every 30 seconds without full page reload
+- [ ] Empty state shown when user has no vaults
 - [ ] All contract errors surface as human-readable messages in the UI
 - [ ] App works on mobile viewport
+- [ ] All v1 frontend tests still pass; new components have test coverage
 
 ---
 
-## Phase 5 — On-Chain Event Monitor (Weeks 11–13)
+## Phase 5 — Redeploy & Document (Week 16)
 
-**Goal:** A live activity feed of vault events, showcasing the analytics/monitoring skillset.
+**Goal:** `BaseVaultV2.sol` live on Base Sepolia, all documentation updated, CI running fork tests.
 
 ### Tasks
-- Use `viem` public client to watch `VaultDeposited` and `VaultWithdrawn` events
-- Build `EventFeed` component displaying recent activity (address, amount, timestamp)
-- Optionally: aggregate total TVL from events
+- Deploy `BaseVaultV2.sol` with Aave Pool and WETH Gateway addresses as constructor args
+- Verify contract source on Basescan
+- Whitelist USDC and WETH on Base Sepolia via `cast send`
+- Update `ARCHITECTURE.md` with v2 contract interface and Aave integration diagram
+- Update `CLAUDE.md` with new contract address and v2 environment variables
+- Update README with v2 feature overview and setup instructions
+- Add fork test job to GitHub Actions CI (requires `BASE_SEPOLIA_RPC_URL` in repo secrets)
+- Deploy frontend v2 to Vercel
 
 ### Acceptance Criteria
-- [ ] `EventFeed` displays last 20 on-chain events in real time
-- [ ] New events appear without page refresh
-- [ ] Addresses are truncated and linkable to Basescan
-- [ ] Amounts are formatted correctly (ETH, not wei)
-- [ ] Component degrades gracefully when RPC is slow or unavailable
-
----
-
-## Phase 6 — Polish & Launch (Week 14+)
-
-**Goal:** Public-facing project ready to share on GitHub and LinkedIn.
-
-### Tasks
-- Write thorough README with architecture diagram, setup instructions, and live demo link
-- Deploy frontend to Vercel
-- (Optional) Deploy contract to Base Mainnet
-- Add GitHub Actions CI: `forge test` + `pnpm typecheck` on every PR
-
-### Acceptance Criteria
-- [ ] README is clear enough for another engineer to run the project from scratch
-- [ ] Frontend accessible at a public URL
-- [ ] CI passes on main branch
-- [ ] GitHub repo is public and linked from LinkedIn
-
----
-
-## Stretch Goals (Post-Launch)
-
-These are not in scope for the initial build but are natural extensions if you want to go deeper:
-
-- **ERC-20 support** — allow depositing any whitelisted token, not just ETH
-- **Multiple vaults per user** — support concurrent deposits with different lock periods
-- **Yield integration** — deposit idle funds into Aave/Compound while locked
-- **Goal-based savings** — user sets a target amount; contract enforces both time and amount locks
+- [ ] `BaseVaultV2.sol` deployed and source-verified on Base Sepolia
+- [ ] Multi-asset vault creation works on live testnet
+- [ ] Yield display visible in UI after time elapses on testnet
+- [ ] All docs reflect v2 state — no v1-only references remain
+- [ ] CI passes including fork test job
+- [ ] Frontend v2 live at updated Vercel URL
+- [ ] GitHub repo README links to live demo and contract on Basescan
