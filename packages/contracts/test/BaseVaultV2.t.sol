@@ -3,10 +3,14 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {BaseVaultV2} from "../src/BaseVaultV2.sol";
+import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract BaseVaultV2Test is Test {
     BaseVaultV2 public vault;
+    ERC20Mock public token;
     address public user = makeAddr("user");
+    address public nonOwner = makeAddr("nonOwner");
 
     event VaultDeposited(
         address indexed depositor,
@@ -24,9 +28,15 @@ contract BaseVaultV2Test is Test {
         uint256 yield_
     );
 
+    event AssetWhitelisted(address indexed asset);
+    event AssetRemoved(address indexed asset);
+
     function setUp() public {
         vault = new BaseVaultV2();
+        token = new ERC20Mock();
         vm.deal(user, 100 ether);
+        token.mint(user, 1000e18);
+        vault.whitelistAsset(address(token));
     }
 
     // ── Deployment ──────────────────────────────
@@ -36,11 +46,57 @@ contract BaseVaultV2Test is Test {
         assertEq(vault.MAX_LOCK_DURATION(), 365 days);
     }
 
-    // ── deposit() happy path ────────────────────
+    function test_owner_isDeployer() public view {
+        assertEq(vault.owner(), address(this));
+    }
 
-    function test_deposit_recordsVault() public {
+    // ── Whitelist — owner functions ─────────────
+
+    function test_whitelistAsset_setsMapping() public {
+        ERC20Mock newToken = new ERC20Mock();
+        vault.whitelistAsset(address(newToken));
+        assertTrue(vault.whitelistedAssets(address(newToken)));
+    }
+
+    function test_whitelistAsset_emitsEvent() public {
+        ERC20Mock newToken = new ERC20Mock();
+        vm.expectEmit(true, false, false, false);
+        emit AssetWhitelisted(address(newToken));
+        vault.whitelistAsset(address(newToken));
+    }
+
+    function test_removeAsset_clearsMapping() public {
+        vault.removeAsset(address(token));
+        assertFalse(vault.whitelistedAssets(address(token)));
+    }
+
+    function test_removeAsset_emitsEvent() public {
+        vm.expectEmit(true, false, false, false);
+        emit AssetRemoved(address(token));
+        vault.removeAsset(address(token));
+    }
+
+    function test_whitelistAsset_revertsForNonOwner() public {
+        vm.prank(nonOwner);
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, nonOwner)
+        );
+        vault.whitelistAsset(address(token));
+    }
+
+    function test_removeAsset_revertsForNonOwner() public {
+        vm.prank(nonOwner);
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, nonOwner)
+        );
+        vault.removeAsset(address(token));
+    }
+
+    // ── ETH deposit() happy path ────────────────
+
+    function test_deposit_eth_recordsVault() public {
         vm.prank(user);
-        uint256 id = vault.deposit{value: 1 ether}(30 days);
+        uint256 id = vault.deposit{value: 1 ether}(address(0), 0, 30 days);
 
         assertEq(id, 0);
         BaseVaultV2.Vault memory v = vault.getVault(user, 0);
@@ -51,24 +107,24 @@ contract BaseVaultV2Test is Test {
         assertEq(v.yielding, false);
     }
 
-    function test_deposit_emitsEvent() public {
+    function test_deposit_eth_emitsEvent() public {
         vm.prank(user);
         vm.expectEmit(true, true, false, true);
         emit VaultDeposited(user, 0, address(0), 1 ether, block.timestamp + 30 days);
-        vault.deposit{value: 1 ether}(30 days);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
     }
 
-    function test_deposit_contractReceivesETH() public {
+    function test_deposit_eth_contractReceivesETH() public {
         vm.prank(user);
-        vault.deposit{value: 5 ether}(30 days);
+        vault.deposit{value: 5 ether}(address(0), 0, 30 days);
         assertEq(address(vault).balance, 5 ether);
     }
 
-    function test_deposit_returnsIncrementingIds() public {
+    function test_deposit_eth_returnsIncrementingIds() public {
         vm.startPrank(user);
-        uint256 id0 = vault.deposit{value: 1 ether}(30 days);
-        uint256 id1 = vault.deposit{value: 2 ether}(60 days);
-        uint256 id2 = vault.deposit{value: 3 ether}(90 days);
+        uint256 id0 = vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+        uint256 id1 = vault.deposit{value: 2 ether}(address(0), 0, 60 days);
+        uint256 id2 = vault.deposit{value: 3 ether}(address(0), 0, 90 days);
         vm.stopPrank();
 
         assertEq(id0, 0);
@@ -76,33 +132,98 @@ contract BaseVaultV2Test is Test {
         assertEq(id2, 2);
     }
 
-    // ── deposit() reverts ───────────────────────
+    // ── ETH deposit() reverts ───────────────────
 
-    function test_deposit_revertsOnZeroAmount() public {
+    function test_deposit_eth_revertsOnZeroAmount() public {
         vm.prank(user);
         vm.expectRevert(BaseVaultV2.Vault__ZeroAmount.selector);
-        vault.deposit{value: 0}(30 days);
+        vault.deposit{value: 0}(address(0), 0, 30 days);
     }
 
     function test_deposit_revertsOnDurationTooShort() public {
         vm.prank(user);
         vm.expectRevert(BaseVaultV2.Vault__LockDurationInvalid.selector);
-        vault.deposit{value: 1 ether}(1 hours);
+        vault.deposit{value: 1 ether}(address(0), 0, 1 hours);
     }
 
     function test_deposit_revertsOnDurationTooLong() public {
         vm.prank(user);
         vm.expectRevert(BaseVaultV2.Vault__LockDurationInvalid.selector);
-        vault.deposit{value: 1 ether}(366 days);
+        vault.deposit{value: 1 ether}(address(0), 0, 366 days);
     }
 
-    // ── Multi-vault ─────────────────────────────
+    // ── ERC-20 deposit() happy path ─────────────
+
+    function test_deposit_erc20_recordsVault() public {
+        vm.startPrank(user);
+        token.approve(address(vault), 100e18);
+        uint256 id = vault.deposit(address(token), 100e18, 30 days);
+        vm.stopPrank();
+
+        assertEq(id, 0);
+        BaseVaultV2.Vault memory v = vault.getVault(user, 0);
+        assertEq(v.asset, address(token));
+        assertEq(v.principal, 100e18);
+        assertEq(v.unlocksAt, block.timestamp + 30 days);
+    }
+
+    function test_deposit_erc20_pullsTokens() public {
+        vm.startPrank(user);
+        token.approve(address(vault), 100e18);
+        vault.deposit(address(token), 100e18, 30 days);
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(address(vault)), 100e18);
+        assertEq(token.balanceOf(user), 900e18);
+    }
+
+    function test_deposit_erc20_emitsEvent() public {
+        vm.startPrank(user);
+        token.approve(address(vault), 100e18);
+        vm.expectEmit(true, true, false, true);
+        emit VaultDeposited(user, 0, address(token), 100e18, block.timestamp + 30 days);
+        vault.deposit(address(token), 100e18, 30 days);
+        vm.stopPrank();
+    }
+
+    // ── ERC-20 deposit() reverts ────────────────
+
+    function test_deposit_erc20_revertsIfNotWhitelisted() public {
+        ERC20Mock rogue = new ERC20Mock();
+        rogue.mint(user, 100e18);
+
+        vm.startPrank(user);
+        rogue.approve(address(vault), 100e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BaseVaultV2.Vault__AssetNotWhitelisted.selector, address(rogue)
+            )
+        );
+        vault.deposit(address(rogue), 100e18, 30 days);
+        vm.stopPrank();
+    }
+
+    function test_deposit_erc20_revertsOnETHValueMismatch() public {
+        vm.startPrank(user);
+        token.approve(address(vault), 100e18);
+        vm.expectRevert(BaseVaultV2.Vault__ETHValueMismatch.selector);
+        vault.deposit{value: 1 ether}(address(token), 100e18, 30 days);
+        vm.stopPrank();
+    }
+
+    function test_deposit_erc20_revertsOnZeroAmount() public {
+        vm.prank(user);
+        vm.expectRevert(BaseVaultV2.Vault__ZeroAmount.selector);
+        vault.deposit(address(token), 0, 30 days);
+    }
+
+    // ── Multi-vault (ETH) ───────────────────────
 
     function test_multiVault_threeConcurrentVaults() public {
         vm.startPrank(user);
-        vault.deposit{value: 1 ether}(30 days);
-        vault.deposit{value: 2 ether}(60 days);
-        vault.deposit{value: 3 ether}(90 days);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+        vault.deposit{value: 2 ether}(address(0), 0, 60 days);
+        vault.deposit{value: 3 ether}(address(0), 0, 90 days);
         vm.stopPrank();
 
         BaseVaultV2.Vault[] memory vaults = vault.getVaults(user);
@@ -114,8 +235,8 @@ contract BaseVaultV2Test is Test {
 
     function test_multiVault_independentUnlockTimes() public {
         vm.startPrank(user);
-        vault.deposit{value: 1 ether}(30 days);
-        vault.deposit{value: 1 ether}(90 days);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+        vault.deposit{value: 1 ether}(address(0), 0, 90 days);
         vm.stopPrank();
 
         BaseVaultV2.Vault memory v0 = vault.getVault(user, 0);
@@ -124,11 +245,49 @@ contract BaseVaultV2Test is Test {
         assertEq(v1.unlocksAt, block.timestamp + 90 days);
     }
 
-    // ── withdraw() happy path ───────────────────
+    // ── Multi-asset vault ───────────────────────
 
-    function test_withdraw_transfersETHAfterLock() public {
+    function test_multiAsset_ethAndErc20Simultaneously() public {
+        vm.startPrank(user);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+        token.approve(address(vault), 50e18);
+        vault.deposit(address(token), 50e18, 60 days);
+        vm.stopPrank();
+
+        BaseVaultV2.Vault[] memory vaults = vault.getVaults(user);
+        assertEq(vaults.length, 2);
+        assertEq(vaults[0].asset, address(0));
+        assertEq(vaults[0].principal, 1 ether);
+        assertEq(vaults[1].asset, address(token));
+        assertEq(vaults[1].principal, 50e18);
+    }
+
+    function test_multiAsset_withdrawEachIndependently() public {
+        vm.startPrank(user);
+        vault.deposit{value: 2 ether}(address(0), 0, 30 days);
+        token.approve(address(vault), 50e18);
+        vault.deposit(address(token), 50e18, 30 days);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 31 days);
+
+        uint256 ethBefore = user.balance;
+        uint256 tokenBefore = token.balanceOf(user);
+
+        vm.startPrank(user);
+        vault.withdraw(0); // ETH vault
+        vault.withdraw(1); // ERC-20 vault
+        vm.stopPrank();
+
+        assertEq(user.balance, ethBefore + 2 ether);
+        assertEq(token.balanceOf(user), tokenBefore + 50e18);
+    }
+
+    // ── ETH withdraw() happy path ───────────────
+
+    function test_withdraw_eth_transfersETHAfterLock() public {
         vm.prank(user);
-        vault.deposit{value: 5 ether}(30 days);
+        vault.deposit{value: 5 ether}(address(0), 0, 30 days);
 
         vm.warp(block.timestamp + 31 days);
 
@@ -140,9 +299,9 @@ contract BaseVaultV2Test is Test {
         assertEq(address(vault).balance, 0);
     }
 
-    function test_withdraw_zerosPrincipal() public {
+    function test_withdraw_eth_zerosPrincipal() public {
         vm.prank(user);
-        vault.deposit{value: 1 ether}(30 days);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
 
         vm.warp(block.timestamp + 31 days);
         vm.prank(user);
@@ -150,13 +309,12 @@ contract BaseVaultV2Test is Test {
 
         BaseVaultV2.Vault memory v = vault.getVault(user, 0);
         assertEq(v.principal, 0);
-        // unlocksAt preserved — vault still in array, just marked withdrawn
         assertTrue(v.unlocksAt > 0);
     }
 
-    function test_withdraw_emitsEvent() public {
+    function test_withdraw_eth_emitsEvent() public {
         vm.prank(user);
-        vault.deposit{value: 2 ether}(30 days);
+        vault.deposit{value: 2 ether}(address(0), 0, 30 days);
 
         vm.warp(block.timestamp + 31 days);
         vm.prank(user);
@@ -165,9 +323,9 @@ contract BaseVaultV2Test is Test {
         vault.withdraw(0);
     }
 
-    function test_withdraw_succeedsAtExactUnlockTime() public {
+    function test_withdraw_eth_succeedsAtExactUnlockTime() public {
         vm.prank(user);
-        vault.deposit{value: 1 ether}(30 days);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
 
         vm.warp(block.timestamp + 30 days);
         vm.prank(user);
@@ -176,33 +334,79 @@ contract BaseVaultV2Test is Test {
         assertEq(vault.getVault(user, 0).principal, 0);
     }
 
+    // ── ERC-20 withdraw() happy path ────────────
+
+    function test_withdraw_erc20_returnsTokens() public {
+        vm.startPrank(user);
+        token.approve(address(vault), 100e18);
+        vault.deposit(address(token), 100e18, 30 days);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 31 days);
+
+        uint256 balanceBefore = token.balanceOf(user);
+        vm.prank(user);
+        vault.withdraw(0);
+
+        assertEq(token.balanceOf(user), balanceBefore + 100e18);
+        assertEq(token.balanceOf(address(vault)), 0);
+    }
+
+    function test_withdraw_erc20_emitsEvent() public {
+        vm.startPrank(user);
+        token.approve(address(vault), 100e18);
+        vault.deposit(address(token), 100e18, 30 days);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 31 days);
+        vm.prank(user);
+        vm.expectEmit(true, true, false, true);
+        emit VaultWithdrawn(user, 0, address(token), 100e18, 0);
+        vault.withdraw(0);
+    }
+
+    function test_withdraw_erc20_worksAfterAssetRemoved() public {
+        vm.startPrank(user);
+        token.approve(address(vault), 100e18);
+        vault.deposit(address(token), 100e18, 30 days);
+        vm.stopPrank();
+
+        // Owner removes asset from whitelist
+        vault.removeAsset(address(token));
+
+        vm.warp(block.timestamp + 31 days);
+
+        uint256 balanceBefore = token.balanceOf(user);
+        vm.prank(user);
+        vault.withdraw(0);
+
+        assertEq(token.balanceOf(user), balanceBefore + 100e18);
+    }
+
     // ── withdraw() independence ─────────────────
 
     function test_withdraw_vault0DoesNotAffectVault1() public {
         vm.startPrank(user);
-        vault.deposit{value: 1 ether}(30 days);
-        vault.deposit{value: 2 ether}(60 days);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+        vault.deposit{value: 2 ether}(address(0), 0, 60 days);
         vm.stopPrank();
 
         vm.warp(block.timestamp + 31 days);
         vm.prank(user);
         vault.withdraw(0);
 
-        // Vault 0 withdrawn
         assertEq(vault.getVault(user, 0).principal, 0);
-        // Vault 1 untouched
         assertEq(vault.getVault(user, 1).principal, 2 ether);
     }
 
     function test_withdraw_canDepositAfterWithdrawing() public {
         vm.startPrank(user);
-        vault.deposit{value: 1 ether}(30 days);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
 
         vm.warp(block.timestamp + 31 days);
         vault.withdraw(0);
 
-        // New deposit gets next id
-        uint256 newId = vault.deposit{value: 2 ether}(60 days);
+        uint256 newId = vault.deposit{value: 2 ether}(address(0), 0, 60 days);
         vm.stopPrank();
 
         assertEq(newId, 1);
@@ -221,7 +425,7 @@ contract BaseVaultV2Test is Test {
 
     function test_withdraw_revertsIfAlreadyWithdrawn() public {
         vm.prank(user);
-        vault.deposit{value: 1 ether}(30 days);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
 
         vm.warp(block.timestamp + 31 days);
         vm.startPrank(user);
@@ -236,7 +440,7 @@ contract BaseVaultV2Test is Test {
 
     function test_withdraw_revertsBeforeLockExpires() public {
         vm.prank(user);
-        vault.deposit{value: 1 ether}(30 days);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
         uint256 unlocksAt = block.timestamp + 30 days;
 
         vm.warp(block.timestamp + 29 days);
@@ -263,8 +467,8 @@ contract BaseVaultV2Test is Test {
 
     function test_getVaults_returnsCorrectArray() public {
         vm.startPrank(user);
-        vault.deposit{value: 1 ether}(30 days);
-        vault.deposit{value: 2 ether}(60 days);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+        vault.deposit{value: 2 ether}(address(0), 0, 60 days);
         vm.stopPrank();
 
         BaseVaultV2.Vault[] memory vaults = vault.getVaults(user);
@@ -275,30 +479,30 @@ contract BaseVaultV2Test is Test {
         assertEq(vaults[1].principal, 2 ether);
     }
 
-    // ── Fuzz tests ──────────────────────────────
+    // ── Fuzz tests (ETH) ────────────────────────
 
-    function testFuzz_deposit_recordsAmount(uint96 amount) public {
+    function testFuzz_deposit_eth_recordsAmount(uint96 amount) public {
         vm.assume(amount > 0);
         vm.deal(user, amount);
         vm.prank(user);
-        vault.deposit{value: amount}(30 days);
+        vault.deposit{value: amount}(address(0), 0, 30 days);
         assertEq(vault.getVault(user, 0).principal, amount);
     }
 
     function testFuzz_deposit_lockDurationInRange(uint256 duration) public {
         duration = bound(duration, 1 days, 365 days);
         vm.prank(user);
-        vault.deposit{value: 1 ether}(duration);
+        vault.deposit{value: 1 ether}(address(0), 0, duration);
         assertEq(vault.getVault(user, 0).unlocksAt, block.timestamp + duration);
     }
 
-    function testFuzz_withdraw_succeedsAfterLock(uint96 amount, uint256 duration) public {
+    function testFuzz_withdraw_eth_succeedsAfterLock(uint96 amount, uint256 duration) public {
         vm.assume(amount > 0);
         duration = bound(duration, 1 days, 365 days);
 
         vm.deal(user, amount);
         vm.prank(user);
-        vault.deposit{value: amount}(duration);
+        vault.deposit{value: amount}(address(0), 0, duration);
 
         vm.warp(block.timestamp + duration);
         vm.prank(user);
@@ -310,33 +514,62 @@ contract BaseVaultV2Test is Test {
 
     function testFuzz_multiVault_createAndWithdrawInRandomOrder(uint8 n) public {
         n = uint8(bound(n, 1, 10));
-        uint256 totalDeposited;
 
         vm.startPrank(user);
 
-        // Create N vaults with 1 ether each, varying lock durations
         for (uint256 i = 0; i < n; i++) {
             uint256 lockDuration = 1 days + (i * 1 days);
-            vault.deposit{value: 1 ether}(lockDuration);
-            totalDeposited += 1 ether;
+            vault.deposit{value: 1 ether}(address(0), 0, lockDuration);
         }
 
-        // Warp past longest lock
         vm.warp(block.timestamp + uint256(n) * 1 days + 1);
 
-        // Withdraw in reverse order
         for (uint256 i = n; i > 0; i--) {
             vault.withdraw(i - 1);
         }
 
         vm.stopPrank();
 
-        // All vaults withdrawn
         BaseVaultV2.Vault[] memory vaults = vault.getVaults(user);
         for (uint256 i = 0; i < vaults.length; i++) {
             assertEq(vaults[i].principal, 0);
         }
-        assertEq(user.balance, 100 ether); // started with 100, deposited and got it all back
+        assertEq(user.balance, 100 ether);
+    }
+
+    // ── Fuzz tests (ERC-20) ─────────────────────
+
+    function testFuzz_deposit_erc20_recordsAmount(uint96 amount) public {
+        vm.assume(amount > 0);
+        token.mint(user, amount);
+
+        vm.startPrank(user);
+        token.approve(address(vault), amount);
+        vault.deposit(address(token), amount, 30 days);
+        vm.stopPrank();
+
+        assertEq(vault.getVault(user, 0).principal, amount);
+        assertEq(vault.getVault(user, 0).asset, address(token));
+    }
+
+    function testFuzz_withdraw_erc20_succeedsAfterLock(uint96 amount, uint256 duration) public {
+        vm.assume(amount > 0);
+        duration = bound(duration, 1 days, 365 days);
+        token.mint(user, amount);
+
+        vm.startPrank(user);
+        token.approve(address(vault), amount);
+        vault.deposit(address(token), amount, duration);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + duration);
+
+        uint256 balanceBefore = token.balanceOf(user);
+        vm.prank(user);
+        vault.withdraw(0);
+
+        assertEq(vault.getVault(user, 0).principal, 0);
+        assertEq(token.balanceOf(user), balanceBefore + amount);
     }
 
     // ── Reentrancy ──────────────────────────────
@@ -363,7 +596,7 @@ contract ReentrantAttackerV2 {
     }
 
     function attack() external {
-        vault.deposit{value: 1 ether}(30 days);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
     }
 
     function reentrantWithdraw() external {
