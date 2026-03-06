@@ -3,7 +3,10 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {BaseVaultV2} from "../src/BaseVaultV2.sol";
+import {IAavePool} from "../src/interfaces/IAavePool.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract BaseVaultV2Test is Test {
@@ -30,9 +33,11 @@ contract BaseVaultV2Test is Test {
 
     event AssetWhitelisted(address indexed asset);
     event AssetRemoved(address indexed asset);
+    event YieldToggled(bool enabled);
 
     function setUp() public {
-        vault = new BaseVaultV2();
+        // Deploy with no Aave — all yield paths are disabled, existing tests are unaffected
+        vault = new BaseVaultV2(address(0), address(0), address(0));
         token = new ERC20Mock();
         vm.deal(user, 100 ether);
         token.mint(user, 1000e18);
@@ -585,6 +590,349 @@ contract BaseVaultV2Test is Test {
         attacker.reentrantWithdraw();
     }
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  Mock Aave contracts (unit tests only — fork tests use live Aave)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// @dev Minimal Aave Pool mock: pull underlying on supply, mint aTokens; burn aTokens on withdraw
+contract MockAavePool {
+    using SafeERC20 for IERC20;
+
+    mapping(address => address) private s_aTokens;
+
+    function setAToken(address asset, address aToken) external {
+        s_aTokens[asset] = aToken;
+    }
+
+    function supply(address asset, uint256 amount, address onBehalfOf, uint16) external {
+        IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
+        ERC20Mock(s_aTokens[asset]).mint(onBehalfOf, amount);
+    }
+
+    function withdraw(address asset, uint256 amount, address to) external returns (uint256) {
+        // Pool has direct burn authority over aTokens (no approval needed from caller)
+        ERC20Mock(s_aTokens[asset]).burn(msg.sender, amount);
+        IERC20(asset).safeTransfer(to, amount);
+        return amount;
+    }
+
+    function getReserveData(address asset)
+        external
+        view
+        returns (IAavePool.ReserveData memory data)
+    {
+        data.aTokenAddress = s_aTokens[asset];
+    }
+
+    /// @dev Test helper: mint extra underlying to simulate yield that has accrued
+    function simulateYield(address asset, address aToken, uint256 yieldAmount) external {
+        ERC20Mock(asset).mint(address(this), yieldAmount);
+        ERC20Mock(aToken).mint(msg.sender, yieldAmount); // caller = vault
+    }
+}
+
+/// @dev Minimal WETH Gateway mock: hold ETH on depositETH, pull aWETH and return ETH on withdrawETH
+contract MockWETHGateway {
+    using SafeERC20 for IERC20;
+
+    address private immutable s_aWETH;
+
+    constructor(address aWETH) {
+        s_aWETH = aWETH;
+    }
+
+    function depositETH(address, address onBehalfOf, uint16) external payable {
+        ERC20Mock(s_aWETH).mint(onBehalfOf, msg.value);
+    }
+
+    function withdrawETH(address, uint256 amount, address to) external {
+        // Caller (vault) must have approved gateway before calling
+        IERC20(s_aWETH).safeTransferFrom(msg.sender, address(this), amount);
+        (bool ok,) = to.call{value: amount}("");
+        require(ok, "MockWETHGateway: ETH transfer failed");
+    }
+
+    receive() external payable {}
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  Yield unit tests (mock Aave, no fork required)
+// ══════════════════════════════════════════════════════════════════════════════
+
+contract BaseVaultV2YieldTest is Test {
+    BaseVaultV2 public vault;
+    MockAavePool public mockPool;
+    MockWETHGateway public mockGateway;
+    ERC20Mock public token;
+    ERC20Mock public aToken;
+    ERC20Mock public aWETH;
+
+    address public user = makeAddr("user");
+    address public nonOwner = makeAddr("nonOwner");
+
+    // Canonical WETH address (arbitrary for unit tests)
+    address public constant WETH = address(0x4200000000000000000000000000000000000006);
+
+    event YieldToggled(bool enabled);
+    event VaultWithdrawn(
+        address indexed depositor,
+        uint256 indexed vaultId,
+        address asset,
+        uint256 principal,
+        uint256 yield_
+    );
+
+    function setUp() public {
+        aWETH = new ERC20Mock();
+        aToken = new ERC20Mock();
+        token = new ERC20Mock();
+
+        mockPool = new MockAavePool();
+        mockPool.setAToken(WETH, address(aWETH));
+        mockPool.setAToken(address(token), address(aToken));
+
+        mockGateway = new MockWETHGateway(address(aWETH));
+
+        vault = new BaseVaultV2(address(mockPool), address(mockGateway), WETH);
+        vault.whitelistAsset(address(token));
+
+        vm.deal(user, 100 ether);
+        token.mint(user, 1000e18);
+    }
+
+    // ── Constructor / initial state ─────────────────────────────────────────
+
+    function test_yield_aaveAddressesStored() public view {
+        assertEq(vault.AAVE_POOL(), address(mockPool));
+        assertEq(vault.WETH_GATEWAY(), address(mockGateway));
+        assertEq(vault.WETH(), WETH);
+    }
+
+    function test_yield_yieldEnabledByDefault() public view {
+        assertTrue(vault.yieldEnabled());
+    }
+
+    function test_yield_aWETHCachedInConstructor() public view {
+        assertEq(vault.aTokenForAsset(address(0)), address(aWETH));
+    }
+
+    function test_yield_erc20ATokenCachedOnWhitelist() public view {
+        assertEq(vault.aTokenForAsset(address(token)), address(aToken));
+    }
+
+    // ── setYieldEnabled ─────────────────────────────────────────────────────
+
+    function test_setYieldEnabled_togglesFlag() public {
+        vault.setYieldEnabled(false);
+        assertFalse(vault.yieldEnabled());
+        vault.setYieldEnabled(true);
+        assertTrue(vault.yieldEnabled());
+    }
+
+    function test_setYieldEnabled_emitsEvent() public {
+        vm.expectEmit(false, false, false, true);
+        emit YieldToggled(false);
+        vault.setYieldEnabled(false);
+    }
+
+    function test_setYieldEnabled_revertsForNonOwner() public {
+        vm.prank(nonOwner);
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, nonOwner)
+        );
+        vault.setYieldEnabled(false);
+    }
+
+    // ── ETH deposit with yield ──────────────────────────────────────────────
+
+    function test_yield_ethDeposit_setsYieldingTrue() public {
+        vm.prank(user);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+
+        BaseVaultV2.Vault memory v = vault.getVault(user, 0);
+        assertTrue(v.yielding);
+        assertEq(v.aToken, address(aWETH));
+    }
+
+    function test_yield_ethDeposit_suppliesEthToGateway() public {
+        vm.prank(user);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+
+        // Vault should hold aWETH, not raw ETH
+        assertEq(address(vault).balance, 0);
+        assertEq(aWETH.balanceOf(address(vault)), 1 ether);
+    }
+
+    // ── ERC-20 deposit with yield ───────────────────────────────────────────
+
+    function test_yield_erc20Deposit_setsYieldingTrue() public {
+        vm.startPrank(user);
+        token.approve(address(vault), 100e18);
+        vault.deposit(address(token), 100e18, 30 days);
+        vm.stopPrank();
+
+        BaseVaultV2.Vault memory v = vault.getVault(user, 0);
+        assertTrue(v.yielding);
+        assertEq(v.aToken, address(aToken));
+    }
+
+    function test_yield_erc20Deposit_suppliesTokensToPool() public {
+        vm.startPrank(user);
+        token.approve(address(vault), 100e18);
+        vault.deposit(address(token), 100e18, 30 days);
+        vm.stopPrank();
+
+        // Vault should hold aTokens, not raw ERC-20
+        assertEq(token.balanceOf(address(vault)), 0);
+        assertEq(token.balanceOf(address(mockPool)), 100e18);
+        assertEq(aToken.balanceOf(address(vault)), 100e18);
+    }
+
+    // ── Yield disabled (setYieldEnabled = false) ────────────────────────────
+
+    function test_yield_disabled_depositsHeldInContract() public {
+        vault.setYieldEnabled(false);
+
+        vm.prank(user);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+
+        BaseVaultV2.Vault memory v = vault.getVault(user, 0);
+        assertFalse(v.yielding);
+        assertEq(address(vault).balance, 1 ether);
+        assertEq(aWETH.balanceOf(address(vault)), 0);
+    }
+
+    function test_yield_disabled_existingYieldVaultStillWithdrawsViaAave() public {
+        // Deposit while yield is enabled
+        vm.prank(user);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+        assertEq(aWETH.balanceOf(address(vault)), 1 ether);
+
+        // Owner disables yield for new deposits
+        vault.setYieldEnabled(false);
+
+        // Existing vault still withdraws via Aave gateway
+        vm.warp(block.timestamp + 31 days);
+        uint256 before = user.balance;
+        vm.prank(user);
+        vault.withdraw(0);
+
+        assertEq(user.balance, before + 1 ether);
+        assertEq(aWETH.balanceOf(address(vault)), 0);
+    }
+
+    // ── ETH withdraw with yield ─────────────────────────────────────────────
+
+    function test_yield_ethWithdraw_returnsPrincipalPlusYield() public {
+        vm.prank(user);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+        // Gateway now holds 1 ETH (from depositETH). Fund it with the additional yield ETH.
+        uint256 yieldAmount = 0.01 ether;
+        aWETH.mint(address(vault), yieldAmount);
+        vm.deal(address(mockGateway), 1 ether + yieldAmount);
+
+        vm.warp(block.timestamp + 31 days);
+        uint256 before = user.balance;
+        vm.prank(user);
+        vault.withdraw(0);
+
+        assertEq(user.balance, before + 1 ether + yieldAmount);
+    }
+
+    function test_yield_ethWithdraw_emitsCorrectYieldAmount() public {
+        vm.prank(user);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+
+        uint256 yieldAmount = 0.05 ether;
+        aWETH.mint(address(vault), yieldAmount);
+        vm.deal(address(mockGateway), 1 ether + yieldAmount);
+
+        vm.warp(block.timestamp + 31 days);
+        vm.prank(user);
+        vm.expectEmit(true, true, false, true);
+        emit VaultWithdrawn(user, 0, address(0), 1 ether, yieldAmount);
+        vault.withdraw(0);
+    }
+
+    // ── ERC-20 withdraw with yield ──────────────────────────────────────────
+
+    function test_yield_erc20Withdraw_returnsPrincipalPlusYield() public {
+        vm.startPrank(user);
+        token.approve(address(vault), 100e18);
+        vault.deposit(address(token), 100e18, 30 days);
+        vm.stopPrank();
+
+        // Simulate 2e18 yield
+        uint256 yieldAmount = 2e18;
+        aToken.mint(address(vault), yieldAmount);
+        token.mint(address(mockPool), yieldAmount);
+
+        vm.warp(block.timestamp + 31 days);
+        uint256 before = token.balanceOf(user);
+        vm.prank(user);
+        vault.withdraw(0);
+
+        assertEq(token.balanceOf(user), before + 100e18 + yieldAmount);
+    }
+
+    // ── totalYield view ─────────────────────────────────────────────────────
+
+    function test_totalYield_returnsZeroWhenNotYielding() public {
+        vault.setYieldEnabled(false);
+        vm.prank(user);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+
+        assertEq(vault.totalYield(user, 0), 0);
+    }
+
+    function test_totalYield_returnsZeroBeforeYieldAccrues() public {
+        vm.prank(user);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+
+        assertEq(vault.totalYield(user, 0), 0);
+    }
+
+    function test_totalYield_reflectsAccruedYield() public {
+        vm.prank(user);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+
+        aWETH.mint(address(vault), 0.01 ether);
+
+        assertEq(vault.totalYield(user, 0), 0.01 ether);
+    }
+
+    function test_totalYield_returnsZeroAfterWithdraw() public {
+        vm.prank(user);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days);
+        aWETH.mint(address(vault), 0.01 ether);
+        vm.deal(address(mockGateway), 1 ether + 0.01 ether);
+
+        vm.warp(block.timestamp + 31 days);
+        vm.prank(user);
+        vault.withdraw(0);
+
+        assertEq(vault.totalYield(user, 0), 0);
+    }
+
+    // ── Multi-vault proportional yield ──────────────────────────────────────
+
+    function test_yield_proportional_twoEthVaults() public {
+        vm.startPrank(user);
+        vault.deposit{value: 1 ether}(address(0), 0, 30 days); // vault 0: 1/3 of pool
+        vault.deposit{value: 2 ether}(address(0), 0, 30 days); // vault 1: 2/3 of pool
+        vm.stopPrank();
+
+        // Simulate 0.03 ETH total yield on 3 ETH pool
+        aWETH.mint(address(vault), 0.03 ether);
+
+        // vault 0 gets 1/3 = 0.01 ETH, vault 1 gets 2/3 = 0.02 ETH
+        assertEq(vault.totalYield(user, 0), 0.01 ether);
+        assertEq(vault.totalYield(user, 1), 0.02 ether);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 
 /// @dev Malicious contract that tries to re-enter withdraw() via receive()
 contract ReentrantAttackerV2 {
