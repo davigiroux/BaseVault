@@ -42,7 +42,12 @@ jobs:
         working-directory: packages/contracts
         env:
           BASE_SEPOLIA_RPC_URL: ${{ secrets.BASE_SEPOLIA_RPC_URL }}
-        run: forge test --fork-url $BASE_SEPOLIA_RPC_URL -vvv --match-contract Fork
+        run: |
+          if [ -z "$BASE_SEPOLIA_RPC_URL" ]; then
+            echo "::warning::BASE_SEPOLIA_RPC_URL not set — skipping fork tests"
+            exit 0
+          fi
+          forge test --fork-url "$BASE_SEPOLIA_RPC_URL" -vvv --match-contract Fork
 
   frontend:
     name: Frontend
