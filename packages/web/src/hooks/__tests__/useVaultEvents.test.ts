@@ -6,6 +6,12 @@ vi.mock('wagmi', () => ({
   useWatchContractEvent: vi.fn(),
 }))
 
+// Provide a non-undefined VAULT_V2_ADDRESS so the hook's guard doesn't bail out
+vi.mock('../../lib/contract', () => ({
+  VAULT_V2_ABI: [],
+  VAULT_V2_ADDRESS: '0xfakecontract0000000000000000000000000001',
+}))
+
 // Mock viem's createPublicClient at module level
 const mockGetBlockNumber = vi.fn<() => Promise<bigint>>()
 const mockGetContractEvents = vi.fn<() => Promise<unknown[]>>()

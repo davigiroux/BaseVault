@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
-import { VAULT_ABI, VAULT_ADDRESS } from '../lib/contract'
+import { VAULT_V2_ABI, VAULT_V2_ADDRESS } from '../lib/contract'
 import { parseVaultError } from '../lib/errors'
 
 export function useWithdraw() {
@@ -15,13 +15,15 @@ export function useWithdraw() {
   const { isLoading: isConfirming, isSuccess } =
     useWaitForTransactionReceipt({ hash: txHash })
 
-  const withdraw = useCallback(async () => {
+  const withdraw = useCallback(async (vaultId: bigint) => {
+    if (!VAULT_V2_ADDRESS) return
     setError(null)
     try {
       await writeContractAsync({
-        address: VAULT_ADDRESS,
-        abi: VAULT_ABI,
+        address: VAULT_V2_ADDRESS,
+        abi: VAULT_V2_ABI,
         functionName: 'withdraw',
+        args: [vaultId],
       })
     } catch (err) {
       setError(parseVaultError(err))

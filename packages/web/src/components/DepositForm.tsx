@@ -1,19 +1,46 @@
 import { type FormEvent, useState } from 'react'
+import { formatUnits, parseUnits, zeroAddress } from 'viem'
+import type { Address } from 'viem'
 import { useDeposit } from '../hooks/useDeposit'
-import { useVault } from '../hooks/useVault'
+import { useTokenApproval } from '../hooks/useTokenApproval'
+import { useWalletBalance } from '../hooks/useWalletBalance'
+import { isETH, getTokenMeta } from '../lib/tokens'
+import { TokenSelector } from './TokenSelector'
+import { ApproveButton } from './ApproveButton'
 
 const MIN_DAYS = 1
 const MAX_DAYS = 365
 const SECONDS_PER_DAY = 86400
 
 export function DepositForm() {
-  const { deposit, isPending, isConfirming, isSuccess, error, reset } =
-    useDeposit()
-  const { hasDeposit, refetch } = useVault()
-
+  const [selectedToken, setSelectedToken] = useState<Address>(zeroAddress)
   const [amount, setAmount] = useState('')
   const [days, setDays] = useState(30)
   const [validationError, setValidationError] = useState<string | null>(null)
+
+  const tokenIsETH = isETH(selectedToken)
+  const tokenMeta = getTokenMeta(selectedToken)
+
+  function parsedAmount(): bigint {
+    const parsed = parseFloat(amount)
+    if (isNaN(parsed) || parsed <= 0) return 0n
+    try {
+      return parseUnits(amount, tokenMeta.decimals)
+    } catch {
+      return 0n
+    }
+  }
+
+  const { balance, decimals: balanceDecimals, formatted: balanceFormatted, isLoading: balanceLoading } =
+    useWalletBalance(selectedToken)
+
+  const { deposit, isPending, isConfirming, isSuccess, error, reset } =
+    useDeposit()
+
+  const {
+    needsApproval,
+    isSuccess: approvalSuccess,
+  } = useTokenApproval(tokenIsETH ? undefined : selectedToken, parsedAmount())
 
   const isProcessing = isPending || isConfirming
 
@@ -34,13 +61,19 @@ export function DepositForm() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     if (!validate()) return
-    await deposit(amount, BigInt(days * SECONDS_PER_DAY))
-    refetch()
+    await deposit(selectedToken, parsedAmount(), BigInt(days * SECONDS_PER_DAY))
   }
 
   function handleReset() {
     setAmount('')
     setDays(30)
+    setValidationError(null)
+    reset()
+  }
+
+  function handleTokenChange(token: Address) {
+    setSelectedToken(token)
+    setAmount('')
     setValidationError(null)
     reset()
   }
@@ -69,7 +102,7 @@ export function DepositForm() {
           Deposit confirmed
         </p>
         <p className="mt-1 text-xs text-vault-muted">
-          Your ETH is now locked in the vault.
+          Your {tokenMeta.symbol} is now locked in the vault.
         </p>
         <button
           onClick={handleReset}
@@ -95,14 +128,12 @@ export function DepositForm() {
         </div>
       </div>
 
-      {hasDeposit && (
-        <div className="rounded-md border border-vault-accent/20 bg-vault-accent/5 px-4 py-3">
-          <p className="text-xs text-vault-accent">
-            You already have an active deposit. Withdraw first to make a new
-            one.
-          </p>
-        </div>
-      )}
+      {/* Token selector */}
+      <TokenSelector
+        selectedToken={selectedToken}
+        onTokenChange={handleTokenChange}
+        disabled={isProcessing}
+      />
 
       {/* Amount input */}
       <div>
@@ -123,12 +154,29 @@ export function DepositForm() {
               setAmount(e.target.value)
               setValidationError(null)
             }}
-            disabled={hasDeposit || isProcessing}
-            className="w-full rounded-lg border border-vault-border bg-vault-bg px-4 py-3 pr-14 font-mono text-lg text-vault-text placeholder:text-vault-muted/40 transition-colors focus:border-vault-border-hover focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={isProcessing}
+            className="w-full rounded-lg border border-vault-border bg-vault-bg px-4 py-3 pr-16 font-mono text-lg text-vault-text placeholder:text-vault-muted/40 transition-colors focus:border-vault-border-hover focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
           />
           <span className="absolute right-4 top-1/2 -translate-y-1/2 font-mono text-sm text-vault-muted">
-            ETH
+            {tokenMeta.symbol}
           </span>
+        </div>
+        <div className="mt-1.5 flex items-center justify-between">
+          <span className="font-mono text-xs text-vault-muted">
+            {balanceLoading
+              ? 'Loading balance...'
+              : `Balance: ${Number(balanceFormatted).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${tokenMeta.symbol}`}
+          </span>
+          {balance > 0n && !balanceLoading && (
+            <button
+              type="button"
+              onClick={() => setAmount(formatUnits(balance, balanceDecimals))}
+              disabled={isProcessing}
+              className="font-mono text-xs text-vault-muted underline decoration-vault-border underline-offset-2 transition-colors hover:text-vault-text disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Max
+            </button>
+          )}
         </div>
       </div>
 
@@ -149,7 +197,7 @@ export function DepositForm() {
               max={MAX_DAYS}
               value={days}
               onChange={(e) => setDays(Number(e.target.value))}
-              disabled={hasDeposit || isProcessing}
+              disabled={isProcessing}
               className="h-1 flex-1 cursor-pointer appearance-none rounded-full bg-vault-border accent-vault-text disabled:cursor-not-allowed disabled:opacity-40"
             />
             <div className="flex items-baseline gap-1">
@@ -162,7 +210,7 @@ export function DepositForm() {
                   const v = Number(e.target.value)
                   if (v >= MIN_DAYS && v <= MAX_DAYS) setDays(v)
                 }}
-                disabled={hasDeposit || isProcessing}
+                disabled={isProcessing}
                 className="w-16 rounded-md border border-vault-border bg-vault-bg px-2 py-1.5 text-right font-mono text-sm text-vault-text focus:border-vault-border-hover focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
               />
               <span className="font-mono text-xs text-vault-muted">days</span>
@@ -182,18 +230,27 @@ export function DepositForm() {
         </div>
       )}
 
-      {/* Submit */}
-      <button
-        type="submit"
-        disabled={hasDeposit || isProcessing}
-        className="w-full rounded-lg border border-vault-border bg-vault-surface px-4 py-3 font-mono text-sm font-medium text-vault-text transition-all hover:border-vault-border-hover hover:bg-vault-border/30 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100"
-      >
-        {isPending
-          ? 'Confirm in wallet...'
-          : isConfirming
-            ? 'Confirming...'
-            : 'Lock ETH'}
-      </button>
+      {/* Approval step (ERC-20 only, when needed) */}
+      {!tokenIsETH && needsApproval && !approvalSuccess && (
+        <ApproveButton token={selectedToken} amount={parsedAmount()} />
+      )}
+
+      {/* Deposit button — hidden during approval step for ERC-20 */}
+      {(tokenIsETH || !needsApproval || approvalSuccess) && (
+        <button
+          type="submit"
+          disabled={isProcessing}
+          className="w-full rounded-lg border border-vault-border bg-vault-surface px-4 py-3 font-mono text-sm font-medium text-vault-text transition-all hover:border-vault-border-hover hover:bg-vault-border/30 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100"
+        >
+          {isPending
+            ? 'Confirm in wallet...'
+            : isConfirming
+              ? 'Confirming...'
+              : tokenIsETH
+                ? 'Lock ETH'
+                : `Step 2 of 2: Deposit ${tokenMeta.symbol}`}
+        </button>
+      )}
     </form>
   )
 }

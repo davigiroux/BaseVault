@@ -5,12 +5,18 @@ import {
 } from 'viem'
 
 const ERROR_MESSAGES: Record<string, string> = {
-  Vault__ZeroAmount: 'Deposit amount must be greater than zero.',
-  Vault__LockDurationInvalid: 'Lock duration must be between 1 day and 365 days.',
+  // V1
   Vault__AlreadyDeposited: 'You already have an active deposit. Withdraw first.',
   Vault__NothingToWithdraw: 'No active deposit found.',
+  // V2
+  Vault__ZeroAmount: 'Deposit amount must be greater than zero.',
+  Vault__LockDurationInvalid: 'Lock duration must be between 1 day and 365 days.',
+  Vault__AssetNotWhitelisted: 'This token is not accepted by the vault.',
+  Vault__ETHValueMismatch: 'Do not send ETH when depositing an ERC-20 token.',
+  Vault__InvalidVaultId: 'Vault not found.',
+  Vault__AlreadyWithdrawn: 'This vault has already been withdrawn.',
   Vault__NotYetUnlocked: 'Your funds are still locked.',
-  Vault__TransferFailed: 'ETH transfer failed. Please try again.',
+  Vault__TransferFailed: 'Transfer failed. Please try again.',
   ReentrancyGuardReentrantCall: 'Unexpected reentry error.',
 }
 

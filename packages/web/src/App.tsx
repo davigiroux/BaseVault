@@ -6,9 +6,8 @@ import { useAccount } from 'wagmi'
 
 import { wagmiConfig } from './lib/wagmi'
 import { Layout } from './components/Layout'
-import { VaultStatus } from './components/VaultStatus'
+import { VaultList } from './components/VaultList'
 import { DepositForm } from './components/DepositForm'
-import { WithdrawButton } from './components/WithdrawButton'
 import { EventFeed } from './components/EventFeed'
 
 const queryClient = new QueryClient()
@@ -20,9 +19,8 @@ function VaultApp() {
     <Layout>
       {isConnected ? (
         <div className="space-y-6">
-          <VaultStatus />
+          <VaultList />
           <DepositForm />
-          <WithdrawButton />
           <EventFeed />
         </div>
       ) : (
@@ -57,8 +55,8 @@ function VaultApp() {
             Connect your wallet
           </h2>
           <p className="mx-auto max-w-xs text-sm text-vault-muted">
-            Connect a wallet on Base Sepolia to deposit ETH into your
-            time-locked vault.
+            Connect a wallet on Base Sepolia to deposit ETH or tokens into
+            time-locked vaults.
           </p>
         </div>
       )}
