@@ -55,7 +55,6 @@ basevault/
 ├── CONCEPT.md
 ├── ROADMAP.md
 ├── ARCHITECTURE.md
-├── STUDY_GUIDE.md
 └── package.json
 ```
 

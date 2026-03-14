@@ -30,7 +30,7 @@ The system has three layers: a Solidity smart contract on Base that manages vaul
 
 | Network       | Address       | Basescan |
 |---------------|---------------|----------|
-| Base Sepolia  | _TBD_         | —        |
+| Base Sepolia  | `0x4f23eaeb65dBe4695180aAeA0A6E38A295CD3489` | [View](https://sepolia.basescan.org/address/0x4f23eaeb65dBe4695180aAeA0A6E38A295CD3489) |
 | Base Mainnet  | _TBD_         | —        |
 
 ### State Variables
