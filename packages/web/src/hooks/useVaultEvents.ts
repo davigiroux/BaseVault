@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPublicClient, http } from 'viem'
 import { baseSepolia } from 'viem/chains'
 import { useWatchContractEvent } from 'wagmi'
-import { VAULT_ABI, VAULT_ADDRESS } from '../lib/contract'
+import { VAULT_V2_ABI, VAULT_V2_ADDRESS } from '../lib/contract'
 import type { VaultEvent, VaultEventType } from '../lib/events'
 
 const MAX_EVENTS = 20
 const CHUNK_SIZE = 9_999n // eth_getLogs max range on public RPCs
-const DEPLOY_BLOCK = 38_260_000n // BaseVault deployment on Base Sepolia
+// Update to V2 deployment block once deployed — avoids scanning all history
+const DEPLOY_BLOCK = 0n
 
 // Both Alchemy (free) and Base public RPC limit eth_getLogs range.
 // Use public RPC (more generous) and paginate in chunks.
@@ -29,8 +30,13 @@ function parseLog(log: RawLog, type: VaultEventType): VaultEvent {
     id: `${log.transactionHash}-${log.logIndex}`,
     type,
     depositor: args.depositor as `0x${string}`,
-    amount: args.amount as bigint,
+    amount: type === 'deposit'
+      ? (args.amount as bigint)
+      : (args.principal as bigint),
     unlocksAt: type === 'deposit' ? (args.unlocksAt as bigint) : undefined,
+    vaultId: args.vaultId as bigint | undefined,
+    asset: args.asset as `0x${string}` | undefined,
+    yieldAmount: type === 'withdrawal' ? (args.yield_ as bigint | undefined) : undefined,
     blockNumber: log.blockNumber ?? 0n,
     transactionHash: log.transactionHash ?? '0x',
     timestamp: null,
@@ -72,6 +78,7 @@ export function useVaultEvents() {
   useEffect(() => {
     let cancelled = false
 
+    if (!VAULT_V2_ADDRESS) { setIsLoading(false); return }
     async function fetchHistory() {
       setIsLoading(true)
       setError(null)
@@ -92,15 +99,15 @@ export function useVaultEvents() {
 
           const [deposits, withdrawals] = await Promise.all([
             logsClient.getContractEvents({
-              address: VAULT_ADDRESS,
-              abi: VAULT_ABI,
+              address: VAULT_V2_ADDRESS!,
+              abi: VAULT_V2_ABI,
               eventName: 'VaultDeposited',
               fromBlock: from,
               toBlock: to,
             }),
             logsClient.getContractEvents({
-              address: VAULT_ADDRESS,
-              abi: VAULT_ABI,
+              address: VAULT_V2_ADDRESS!,
+              abi: VAULT_V2_ABI,
               eventName: 'VaultWithdrawn',
               fromBlock: from,
               toBlock: to,
@@ -143,8 +150,9 @@ export function useVaultEvents() {
 
   // Subscribe to new deposit events
   useWatchContractEvent({
-    address: VAULT_ADDRESS,
-    abi: VAULT_ABI,
+    enabled: !!VAULT_V2_ADDRESS,
+    address: VAULT_V2_ADDRESS!,
+    abi: VAULT_V2_ABI,
     eventName: 'VaultDeposited',
     onLogs(logs) {
       const parsed = logs.map((l) =>
@@ -162,8 +170,9 @@ export function useVaultEvents() {
 
   // Subscribe to new withdrawal events
   useWatchContractEvent({
-    address: VAULT_ADDRESS,
-    abi: VAULT_ABI,
+    enabled: !!VAULT_V2_ADDRESS,
+    address: VAULT_V2_ADDRESS!,
+    abi: VAULT_V2_ABI,
     eventName: 'VaultWithdrawn',
     onLogs(logs) {
       const parsed = logs.map((l) =>

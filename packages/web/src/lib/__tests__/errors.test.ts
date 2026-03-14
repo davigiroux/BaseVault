@@ -55,7 +55,7 @@ describe('parseVaultError', () => {
 
   it('maps Vault__TransferFailed', () => {
     expect(parseVaultError(makeRevertError('Vault__TransferFailed'))).toBe(
-      'ETH transfer failed. Please try again.',
+      'Transfer failed. Please try again.',
     )
   })
 

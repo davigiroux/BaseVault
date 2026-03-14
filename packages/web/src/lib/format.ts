@@ -1,8 +1,22 @@
-import { formatEther } from 'viem'
+import { formatEther, formatUnits } from 'viem'
+import type { Address } from 'viem'
+import { getTokenMeta, isETH } from './tokens'
 
 export function formatEthAmount(wei: bigint, decimals = 4): string {
   const eth = formatEther(wei)
   return `${parseFloat(eth).toFixed(decimals)} ETH`
+}
+
+export function formatAssetAmount(
+  wei: bigint,
+  asset: Address,
+  maxDecimals = 4
+): string {
+  const meta = getTokenMeta(asset)
+  const formatted = isETH(asset)
+    ? formatEther(wei)
+    : formatUnits(wei, meta.decimals)
+  return `${parseFloat(formatted).toFixed(maxDecimals)} ${meta.symbol}`
 }
 
 export function formatCountdown(secondsRemaining: number): string {

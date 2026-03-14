@@ -1,12 +1,14 @@
-import { useChainId, useBalance } from 'wagmi'
+import { useState } from 'react'
+import { useChainId } from 'wagmi'
+import { zeroAddress } from 'viem'
 import { useVaultEvents } from '../hooks/useVaultEvents'
 import {
-  formatEthAmount,
+  formatAssetAmount,
   truncateAddress,
   formatRelativeTime,
 } from '../lib/format'
 import { getAddressUrl, getTxUrl } from '../lib/chain'
-import { VAULT_ADDRESS } from '../lib/contract'
+import { getTokenMeta } from '../lib/tokens'
 import type { VaultEvent } from '../lib/events'
 
 function EventRow({
@@ -17,6 +19,8 @@ function EventRow({
   chainId: number
 }) {
   const isDeposit = event.type === 'deposit'
+  const asset = event.asset ?? zeroAddress
+  const symbol = getTokenMeta(asset).symbol
 
   return (
     <div className="flex items-center justify-between gap-3 py-3">
@@ -53,10 +57,15 @@ function EventRow({
         </div>
 
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-medium text-vault-text">
               {isDeposit ? 'Deposit' : 'Withdrawal'}
             </span>
+            {event.vaultId !== undefined && (
+              <span className="font-mono text-[10px] text-vault-muted/60">
+                #{Number(event.vaultId)}
+              </span>
+            )}
             <a
               href={getAddressUrl(chainId, event.depositor)}
               target="_blank"
@@ -74,14 +83,22 @@ function EventRow({
         </div>
       </div>
 
-      <a
-        href={getTxUrl(chainId, event.transactionHash)}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="shrink-0 font-mono text-sm font-medium text-vault-text transition-colors hover:text-vault-accent"
-      >
-        {formatEthAmount(event.amount)}
-      </a>
+      <div className="shrink-0 text-right">
+        <a
+          href={getTxUrl(chainId, event.transactionHash)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-mono text-sm font-medium text-vault-text transition-colors hover:text-vault-accent"
+        >
+          {formatAssetAmount(event.amount, asset)}
+          <span className="ml-1 text-xs text-vault-muted">{symbol}</span>
+        </a>
+        {!isDeposit && event.yieldAmount !== undefined && event.yieldAmount > 0n && (
+          <p className="font-mono text-[10px] text-vault-success">
+            +{formatAssetAmount(event.yieldAmount, asset)} yield
+          </p>
+        )}
+      </div>
     </div>
   )
 }
@@ -89,64 +106,75 @@ function EventRow({
 export function EventFeed() {
   const { events, isLoading, error } = useVaultEvents()
   const chainId = useChainId()
-  const { data: balance } = useBalance({ address: VAULT_ADDRESS })
+  // Collapsed by default on mobile, expanded on sm+
+  const [expanded, setExpanded] = useState(false)
 
   return (
     <div className="animate-fade-in">
-      {/* Section header */}
-      <div className="mb-4 flex items-center gap-2">
+      {/* Section header — tappable on mobile to expand/collapse */}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="mb-4 flex w-full items-center gap-2 sm:cursor-default"
+      >
         <div className="h-px flex-1 bg-vault-border" />
-        <span className="font-mono text-xs uppercase tracking-widest text-vault-muted">
+        <span className="flex items-center gap-1.5 font-mono text-xs uppercase tracking-widest text-vault-muted">
           Activity
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            fill="none"
+            className={`transition-transform sm:hidden ${expanded ? 'rotate-180' : ''}`}
+          >
+            <path
+              d="M2 3.5L5 6.5L8 3.5"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </span>
         <div className="h-px flex-1 bg-vault-border" />
-      </div>
+      </button>
 
-      {/* TVL stat */}
-      {balance && balance.value > 0n && (
-        <div className="mb-3 flex items-center justify-between rounded-md border border-vault-border bg-vault-surface/50 px-4 py-2">
-          <span className="text-xs uppercase tracking-widest text-vault-muted">
-            Total Locked
-          </span>
-          <span className="font-mono text-sm font-semibold text-vault-text">
-            {formatEthAmount(balance.value)}
-          </span>
+      {/* Content: always visible on sm+, toggle on mobile */}
+      <div className={`${expanded ? 'block' : 'hidden'} sm:block`}>
+        <div className="rounded-lg border border-vault-border bg-vault-surface p-4">
+          {/* Loading */}
+          {isLoading && (
+            <div className="flex items-center gap-3 py-4">
+              <div className="h-3 w-3 rounded-full bg-vault-muted animate-pulse-glow" />
+              <span className="font-mono text-sm text-vault-muted">
+                Loading activity...
+              </span>
+            </div>
+          )}
+
+          {/* Error */}
+          {!isLoading && error && (
+            <div className="rounded-md border border-vault-danger/20 bg-vault-danger/5 px-4 py-3">
+              <p className="text-xs text-vault-danger">{error}</p>
+            </div>
+          )}
+
+          {/* Empty */}
+          {!isLoading && !error && events.length === 0 && (
+            <p className="py-4 text-center text-sm text-vault-muted">
+              No vault activity yet
+            </p>
+          )}
+
+          {/* Event list */}
+          {!isLoading && !error && events.length > 0 && (
+            <div className="divide-y divide-vault-border">
+              {events.map((event) => (
+                <EventRow key={event.id} event={event} chainId={chainId} />
+              ))}
+            </div>
+          )}
         </div>
-      )}
-
-      <div className="rounded-lg border border-vault-border bg-vault-surface p-4">
-        {/* Loading */}
-        {isLoading && (
-          <div className="flex items-center gap-3 py-4">
-            <div className="h-3 w-3 rounded-full bg-vault-muted animate-pulse-glow" />
-            <span className="font-mono text-sm text-vault-muted">
-              Loading activity...
-            </span>
-          </div>
-        )}
-
-        {/* Error */}
-        {!isLoading && error && (
-          <div className="rounded-md border border-vault-danger/20 bg-vault-danger/5 px-4 py-3">
-            <p className="text-xs text-vault-danger">{error}</p>
-          </div>
-        )}
-
-        {/* Empty */}
-        {!isLoading && !error && events.length === 0 && (
-          <p className="py-4 text-center text-sm text-vault-muted">
-            No vault activity yet
-          </p>
-        )}
-
-        {/* Event list */}
-        {!isLoading && !error && events.length > 0 && (
-          <div className="divide-y divide-vault-border">
-            {events.map((event) => (
-              <EventRow key={event.id} event={event} chainId={chainId} />
-            ))}
-          </div>
-        )}
       </div>
     </div>
   )

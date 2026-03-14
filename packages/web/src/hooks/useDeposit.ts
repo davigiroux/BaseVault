@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react'
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
-import { parseEther } from 'viem'
-import { VAULT_ABI, VAULT_ADDRESS } from '../lib/contract'
+import { zeroAddress } from 'viem'
+import type { Address } from 'viem'
+import { VAULT_V2_ABI, VAULT_V2_ADDRESS } from '../lib/contract'
 import { parseVaultError } from '../lib/errors'
 
 export function useDeposit() {
@@ -17,15 +18,17 @@ export function useDeposit() {
     useWaitForTransactionReceipt({ hash: txHash })
 
   const deposit = useCallback(
-    async (ethAmount: string, lockDurationSeconds: bigint) => {
+    async (asset: Address, amount: bigint, lockDurationSeconds: bigint) => {
+      if (!VAULT_V2_ADDRESS) return
       setError(null)
+      const isNative = asset === zeroAddress
       try {
         await writeContractAsync({
-          address: VAULT_ADDRESS,
-          abi: VAULT_ABI,
+          address: VAULT_V2_ADDRESS,
+          abi: VAULT_V2_ABI,
           functionName: 'deposit',
-          args: [lockDurationSeconds],
-          value: parseEther(ethAmount),
+          args: [asset, isNative ? 0n : amount, lockDurationSeconds],
+          value: isNative ? amount : 0n,
         })
       } catch (err) {
         setError(parseVaultError(err))
