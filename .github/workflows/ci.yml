@@ -24,6 +24,26 @@ jobs:
         working-directory: packages/contracts
         run: forge test -vvv
 
+  contracts-fork:
+    name: Contract Fork Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install forge dependencies
+        working-directory: packages/contracts
+        run: forge install foundry-rs/forge-std@v1.15.0 OpenZeppelin/openzeppelin-contracts@v5.1.0 --no-git
+
+      - name: Run fork tests
+        working-directory: packages/contracts
+        env:
+          BASE_SEPOLIA_RPC_URL: ${{ secrets.BASE_SEPOLIA_RPC_URL }}
+        run: forge test --fork-url $BASE_SEPOLIA_RPC_URL -vvv --match-contract Fork
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
